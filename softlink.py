@@ -80,13 +80,33 @@ class FileMonitorHandler(FileSystemEventHandler):
         if not event.is_directory:
             create_symlink_and_copy(event.dest_path)
 
+    def on_file_deleted(src_path: str):
+    relative_path = os.path.relpath(src_path, SOURCE_DIR)
+    dest_file = os.path.join(DEST_DIR, relative_path)
+    if os.path.exists(dest_file):
+        os.remove(dest_file)
+        log_info(f"{dest_file} 由于源文件删除而被删除")
+
+    # 遍历DEST_DIR以查找失效的软链接并删除
+    for root, _, files in os.walk(DEST_DIR):
+        for name in files:
+            file_path = os.path.join(root, name)
+            if os.path.islink(file_path) and not os.path.exists(os.readlink(file_path)):
+                os.remove(file_path)
+                log_info(f"软链接 {file_path} 由于指向的源文件删除而被删除")
+
+class FileMonitorHandler(FileSystemEventHandler):
+    def on_created(self, event):
+        if not event.is_directory:
+            create_symlink_and_copy(event.src_path)
+
+    def on_moved(self, event):
+        if not event.is_directory:
+            create_symlink_and_copy(event.dest_path)
+
     def on_deleted(self, event):
         if not event.is_directory:
-            relative_path = os.path.relpath(event.src_path, SOURCE_DIR)
-            dest_file = os.path.join(DEST_DIR, relative_path)
-            if os.path.exists(dest_file):
-                os.remove(dest_file)
-                log_info(f"{dest_file} 由于源文件删除而被删除")
+            on_file_deleted(event.src_path)
 
 if __name__ == "__main__":
     event_handler = FileMonitorHandler()
