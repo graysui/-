@@ -29,13 +29,14 @@ config = configparser.ConfigParser()
 try:
     config.read('config.ini')
     compatibility_mode = config.getboolean('settings', 'compatibility_mode')
+    POLLING_INTERVAL = config.getint('settings', 'POLLING_INTERVAL')  # 添加轮询配置
     SOURCE_DIR = os.path.abspath(config['paths']['SOURCE_DIR'])
     DEST_DIR = os.path.abspath(config['paths']['DEST_DIR'])
     LOG_PATH = os.path.abspath(config['paths']['LOG_PATH'])
 
     LINK_FILE_EXTENSIONS = [ext.strip() for ext in config['settings']['LINK_FILE_EXTENSIONS'].split(',')]
     COPY_FILE_EXTENSIONS = [ext.strip() for ext in config['settings']['COPY_FILE_EXTENSIONS'].split(',')]
-except (configparser.NoOptionError, configparser.NoSectionError) as e:
+except (configparser.NoOptionError, configparser.NoSectionError, KeyError) as e:
     log_error(f"读取配置文件时出错: {e}")
     raise SystemExit
 
@@ -115,7 +116,7 @@ if __name__ == "__main__":
     event_handler = FileMonitorHandler()
 
     if compatibility_mode:
-        observer = PollingObserver(timeout=10)
+        observer = PollingObserver(timeout=POLLING_INTERVAL)
     else:
         observer = Observer()
 
