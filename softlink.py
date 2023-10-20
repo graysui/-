@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-可运行5.0
+目录监控5.0
 一个文件监控工具，根据文件类型选择执行复制或创建软链接的操作。
 """
 import os
@@ -83,9 +83,12 @@ class Sync:
         """处理文件，根据文件类型执行复制或创建软链接的操作"""
         file_ext = os.path.splitext(event_path)[1].lower()
 
+        # 从事件路径中剥离源路径，获取相对路径
+        relative_path = os.path.relpath(event_path, self.source_path)
+
         # 针对元数据文件如 nfo、jpg 进行复制
         if file_ext in ['.nfo', '.jpg']:
-            target_file = os.path.join(self.link_path, os.path.basename(event_path))
+            target_file = os.path.join(self.link_path, relative_path)
 
             # 检查目标文件是否已存在
             file_existed = os.path.exists(target_file)
@@ -99,18 +102,19 @@ class Sync:
                     logger.error(f"在尝试删除 {target_file} 时发生错误: {str(delete_error)}")
 
             try:
+                os.makedirs(os.path.dirname(target_file), exist_ok=True)  # 确保目标目录存在
                 shutil.copy2(event_path, target_file)
+                logger.info(f"复制了 {event_path} 到 {target_file}")
                 if file_existed:
-                    logger.info(f"修改了 {target_file}")
-                else:
-                    logger.info(f"复制了 {event_path} 到 {target_file}")
+                    logger.info(f"修改了 {target_file}")                
             except Exception as copy_error:
                 logger.error(f"在尝试复制 {event_path} 到 {target_file} 时发生错误: {str(copy_error)}")
 
         # 针对视频文件如 mkv、mp4 创建软链接
         elif file_ext in ['.mkv', '.mp4']:
-            link_name = os.path.join(self.link_path, os.path.basename(event_path))
+            link_name = os.path.join(self.link_path, relative_path)
             try:
+                os.makedirs(os.path.dirname(link_name), exist_ok=True)  # 确保目标目录存在
                 os.symlink(event_path, link_name)
                 logger.info(f"为 {event_path} 创建了软链接 {link_name}")
             except Exception as e:
@@ -153,4 +157,5 @@ if __name__ == "__main__":
             pass
     except KeyboardInterrupt:
         sync.stop_service()
+
 
