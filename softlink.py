@@ -1,131 +1,155 @@
+# -*- coding: utf-8 -*-
+
+"""
+可运行5.0
+一个文件监控工具，根据文件类型选择执行复制或创建软链接的操作。
+"""
 import os
-import time
 import shutil
+import threading
 import logging
-from watchdog.observers import Observer
-from watchdog.observers.polling import PollingObserver
+from time import time
 from watchdog.events import FileSystemEventHandler
-import configparser
+from watchdog.observers import Observer
 
-# 设置日志
-def setup_logging(log_path):
-    if os.path.isdir(log_path):
-        log_file = os.path.join(log_path, "softlink.log")
-    else:
-        log_file = log_path
+# 日志配置
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
-    logging.basicConfig(filename=log_file, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# 定义并设置控制台日志处理器
+console_handler = logging.StreamHandler()
+console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(console_formatter)
+logger.addHandler(console_handler)
 
-def log_info(message):
-    logging.info(message)
-    print(f"INFO: {message}")
+# 定义并设置文件日志处理器
+file_handler = logging.FileHandler('monitor_v1_0.log')
+file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(file_formatter)
+logger.addHandler(file_handler)
 
-def log_error(message):
-    logging.error(message)
-    print(f"ERROR: {message}")
+lock = threading.Lock()
 
-# 读取配置文件
-config = configparser.ConfigParser()
-try:
-    config.read('config.ini')
-    compatibility_mode = config.getboolean('settings', 'compatibility_mode')
-    POLLING_INTERVAL = config.getint('settings', 'POLLING_INTERVAL')  # 添加轮询配置
-    SOURCE_DIR = os.path.abspath(config['paths']['SOURCE_DIR'])
-    DEST_DIR = os.path.abspath(config['paths']['DEST_DIR'])
-    LOG_PATH = os.path.abspath(config['paths']['LOG_PATH'])
-
-    LINK_FILE_EXTENSIONS = [ext.strip() for ext in config['settings']['LINK_FILE_EXTENSIONS'].split(',')]
-    COPY_FILE_EXTENSIONS = [ext.strip() for ext in config['settings']['COPY_FILE_EXTENSIONS'].split(',')]
-except (configparser.NoOptionError, configparser.NoSectionError, KeyError) as e:
-    log_error(f"读取配置文件时出错: {e}")
-    raise SystemExit
-
-setup_logging(LOG_PATH)
-
-# 检查路径
-for path in [SOURCE_DIR, DEST_DIR, LOG_PATH]:
-    if not os.path.exists(path):
-        log_error(f"路径 {path} 不存在")
-
-def create_symlink_and_copy(event_path: str, overwrite=False):
-    relative_path = os.path.relpath(event_path, SOURCE_DIR)
-    dest_folder = os.path.dirname(os.path.join(DEST_DIR, relative_path))
-    dest_file = os.path.join(DEST_DIR, relative_path)
-
-    if not os.path.exists(dest_folder):
-        os.makedirs(dest_folder)
-
-    file_ext = os.path.splitext(event_path)[1].lower()
-
-    if file_ext in LINK_FILE_EXTENSIONS:
-        if os.path.exists(dest_file):
-            log_info(f"{event_path} 已存在，跳过")
-            return
-        try:
-            os.symlink(event_path, dest_file)
-            log_info(f"{event_path} 创建软链完成")
-        except OSError as e:
-            log_error(f"从 {event_path} 到 {dest_file} 创建软链接时出错: {str(e)}")
-    elif file_ext in COPY_FILE_EXTENSIONS:
-        if os.path.exists(dest_file) and not overwrite:
-            log_info(f"{event_path} 已存在，跳过")
-            return
-        if os.path.exists(dest_file) and overwrite:
-            os.remove(dest_file)  # 删除原文件以便覆盖
-        try:
-            shutil.copy(event_path, dest_file)
-            log_info(f"{event_path} 已覆盖")
-        except OSError as e:
-            log_error(f"从 {event_path} 到 {dest_file} 复制时出错: {str(e)}")
-    else:
-        log_info(f"{event_path} 的文件类型不在预期的范围内，跳过")
-
-def on_file_deleted(src_path: str):
-    relative_path = os.path.relpath(src_path, SOURCE_DIR)
-    dest_file = os.path.join(DEST_DIR, relative_path)
-
-    if os.path.islink(dest_file) and not os.path.exists(os.readlink(dest_file)):
-        os.remove(dest_file)
-        log_info(f"软链接 {dest_file} 由于指向的源文件删除而被删除")
-    elif os.path.exists(dest_file):
-        os.remove(dest_file)
-        log_info(f"{dest_file} 由于源文件删除而被删除")
 
 class FileMonitorHandler(FileSystemEventHandler):
+    """文件监控处理器"""
+    processed_files = dict()
+
+    def __init__(self, monpath, sync, **kwargs):
+        super(FileMonitorHandler, self).__init__(**kwargs)
+        self._watch_path = monpath
+        self.sync = sync
+
     def on_created(self, event):
-        if not event.is_directory:
-            create_symlink_and_copy(event.src_path)
-
-    def on_moved(self, event):
-        if not event.is_directory:
-            create_symlink_and_copy(event.dest_path)
-
-    def on_deleted(self, event):
-        if not event.is_directory:
-            on_file_deleted(event.src_path)
+        """当文件被创建时的处理方法"""
+        self.file_change_handler(event)
 
     def on_modified(self, event):
+        """当文件被修改时的处理方法"""
+        self.file_change_handler(event)
+
+    def file_change_handler(self, event):
+        """处理文件变动事件，如创建、修改等"""
+
+        now = time()
+        recent_time = self.processed_files.get(event.src_path, 0)
+        if now - recent_time < 1:  # 如果文件已在最近1秒内处理过，则忽略
+            return
+        self.processed_files[event.src_path] = now  # 更新为最新处理时间
+
         if not event.is_directory:
-            file_ext = os.path.splitext(event.src_path)[1].lower()
-            if file_ext in COPY_FILE_EXTENSIONS:
-                create_symlink_and_copy(event.src_path, overwrite=True)
-            elif file_ext in LINK_FILE_EXTENSIONS:
-                log_info(f"软链接源文件 {event.src_path} 已被修改，跳过")
+            event_path = event.src_path
+            try:
+                lock.acquire()
+                if not os.path.exists(event_path):
+                    return
+                self.sync.handle_file(event_path)
+            except Exception as e:
+                logger.error(f"处理 {event_path} 时发生错误：{str(e)}")
+            finally:
+                lock.release()
+
+
+class Sync:
+    """核心同步类，处理文件变动并根据文件类型选择操作"""
+
+    _observer = []
+
+    def __init__(self, source_path, link_path):
+        self.source_path = source_path
+        self.link_path = link_path
+
+    def handle_file(self, event_path, retry=False):
+        """处理文件，根据文件类型执行复制或创建软链接的操作"""
+        file_ext = os.path.splitext(event_path)[1].lower()
+
+        # 针对元数据文件如 nfo、jpg 进行复制
+        if file_ext in ['.nfo', '.jpg']:
+            target_file = os.path.join(self.link_path, os.path.basename(event_path))
+
+            # 检查目标文件是否已存在
+            file_existed = os.path.exists(target_file)
+
+            try:
+                shutil.copy2(event_path, target_file)
+                if file_existed:
+                    logger.info(f"修改了 {target_file}")
+                else:
+                    logger.info(f"复制了 {event_path} 到 {target_file}")
+            except Exception as initial_error:
+                if file_existed:
+                    try:
+                        os.remove(target_file)
+                        shutil.copy2(event_path, target_file)
+                        logger.info(f"修改了 {target_file}")
+                    except Exception as retry_error:
+                        logger.error(f"在尝试重新复制 {event_path} 时发生错误: {str(retry_error)}")
+                else:
+                    logger.error(f"处理 {event_path} 时发生错误: {str(initial_error)}")
+
+            # 针对视频文件如 mkv、mp4 创建软链接
+        elif file_ext in ['.mkv', '.mp4']:
+            link_name = os.path.join(self.link_path, os.path.basename(event_path))
+            try:
+                os.symlink(event_path, link_name)
+                logger.info(f"为 {event_path} 创建了软链接 {link_name}")
+            except Exception as e:
+                # 如果软链接已存在，跳过
+                if os.path.exists(link_name):
+                    logger.info(f"{link_name} 已存在，跳过创建软链接")
+                else:
+                    logger.error(f"为 {event_path} 创建软链接时发生错误: {str(e)}")
+
+    def run_service(self):
+        """启动监控服务"""
+        observer = Observer(timeout=10)
+        observer.schedule(FileMonitorHandler(self.source_path, self), path=self.source_path, recursive=True)
+        observer.daemon = True
+        observer.start()
+        self._observer.append(observer)
+        print(f"开始监控 {self.source_path}")
+
+    def stop_service(self):
+        """停止监控服务"""
+        for observer in self._observer:
+            observer.stop()
+            observer.join()
+        self._observer = []
+        print(f"停止监控 {self.source_path}")
+
 
 if __name__ == "__main__":
-    event_handler = FileMonitorHandler()
+    source_path = "/media/欧美剧"  # 替换为你要监控的路径
+    target_link_path = "/media/benji"  # 替换为你想要放置软链接或复制文件的路径
 
-    if compatibility_mode:
-        observer = PollingObserver(timeout=POLLING_INTERVAL)
-    else:
-        observer = Observer()
+    if not os.path.exists(target_link_path):
+        os.makedirs(target_link_path)
 
-    observer.schedule(event_handler, path=SOURCE_DIR, recursive=True)
-    observer.start()
+    sync = Sync(source_path, target_link_path)
+    sync.run_service()
+
     try:
         while True:
-            time.sleep(1)
+            pass
     except KeyboardInterrupt:
-        observer.stop()
-    observer.join()
-
+        sync.stop_service()
