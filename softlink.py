@@ -94,6 +94,7 @@ class Sync:
                 try:
                     os.remove(target_file)
                     logger.info(f"删除了已存在的 {target_file}")
+                    time.sleep(0.1)
                 except Exception as delete_error:
                     logger.error(f"在尝试删除 {target_file} 时发生错误: {str(delete_error)}")
 
