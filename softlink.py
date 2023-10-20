@@ -90,24 +90,23 @@ class Sync:
             # 检查目标文件是否已存在
             file_existed = os.path.exists(target_file)
 
+            if file_existed:
+                try:
+                    os.remove(target_file)
+                    logger.info(f"删除了已存在的 {target_file}")
+                except Exception as delete_error:
+                    logger.error(f"在尝试删除 {target_file} 时发生错误: {str(delete_error)}")
+
             try:
                 shutil.copy2(event_path, target_file)
                 if file_existed:
                     logger.info(f"修改了 {target_file}")
                 else:
                     logger.info(f"复制了 {event_path} 到 {target_file}")
-            except Exception as initial_error:
-                if file_existed:
-                    try:
-                        os.remove(target_file)
-                        shutil.copy2(event_path, target_file)
-                        logger.info(f"修改了 {target_file}")
-                    except Exception as retry_error:
-                        logger.error(f"在尝试重新复制 {event_path} 时发生错误: {str(retry_error)}")
-                else:
-                    logger.error(f"处理 {event_path} 时发生错误: {str(initial_error)}")
+            except Exception as copy_error:
+                logger.error(f"在尝试复制 {event_path} 到 {target_file} 时发生错误: {str(copy_error)}")
 
-            # 针对视频文件如 mkv、mp4 创建软链接
+        # 针对视频文件如 mkv、mp4 创建软链接
         elif file_ext in ['.mkv', '.mp4']:
             link_name = os.path.join(self.link_path, os.path.basename(event_path))
             try:
@@ -153,3 +152,4 @@ if __name__ == "__main__":
             pass
     except KeyboardInterrupt:
         sync.stop_service()
+
